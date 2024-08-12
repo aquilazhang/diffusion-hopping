@@ -9,6 +9,7 @@ from diffusion_hopping.data.featurization.util import (
     atom_names,
     atomic_symbols_to_one_hot,
     get_ligand_scaffold_mask,
+    get_scaff_idx,
     residue_names,
     residue_names_to_one_hot,
 )
@@ -54,14 +55,44 @@ class ProteinLigandSimpleFeaturization:
             protein[["x_coord", "y_coord", "z_coord"]].values, dtype=torch.float
         )
 
-    def __call__(self, complex: ProteinLigandComplex) -> HeteroData:
+    def __call__(self, complex: ProteinLigandComplex, scaff_mols = None, atom_nums=0) -> HeteroData:
+        # atom nums the number of atoms need to add/extract from ligand_linker
         # remove all hydrogens from ligand
         ligand = complex.ligand.rdkit_mol()
         ligand = Chem.RemoveHs(ligand)
 
+        if scaff_mols is not None:
+            # modify the ligand (add some dummy atoms or extract some atoms)
+            kept_index = torch.LongTensor(get_scaff_idx(ligand=ligand,scaff_mols=scaff_mols))
+            dropped_index = torch.LongTensor([i for i in range(ligand.GetNumAtoms()) if i not in kept_index])
+
+        # remained parts: False
+        scaffold_mask = get_ligand_scaffold_mask(ligand,scaff_mols=scaff_mols)        
         x_ligand = self.get_ligand_atom_types(ligand)
         pos_ligand = self.get_ligand_positions(ligand)
 
+        if atom_nums == 0:
+            pass
+        elif atom_nums > 0:
+            # copy the first several atoms in linker
+            x_ligand = torch.cat([x_ligand,x_ligand.index_select(dim=0,index=dropped_index[:atom_nums])],dim=0)
+            pos_ligand = torch.cat([pos_ligand,pos_ligand.index_select(dim=0,index=dropped_index[:atom_nums])],dim=0)
+            scaffold_mask = torch.cat([scaffold_mask,torch.zeros(atom_nums,dtype=bool)],dim=0)
+        elif atom_nums < 0:
+            # delete the last several atoms in linker
+            x_ligand = torch.cat([
+                x_ligand.index_select(dim=0,index=kept_index),
+                # [:atom_nums] like [:-2]
+                x_ligand.index_select(dim=0,index=dropped_index[:atom_nums])
+            ],dim=0)
+            pos_ligand = torch.cat([
+                pos_ligand.index_select(dim=0,index=kept_index),
+                pos_ligand.index_select(dim=0,index=dropped_index[:atom_nums])
+            ])
+            scaffold_mask = torch.cat([
+                scaffold_mask.index_select(dim=0,index=kept_index),
+                scaffold_mask.index_select(dim=0,index=dropped_index[:atom_nums])
+            ])
         protein: PandasPdb = complex.protein.pandas_pdb()
         protein: PandasPdb = self.chain_selection_transform(protein, pos_ligand)
 
@@ -76,7 +107,6 @@ class ProteinLigandSimpleFeaturization:
 
         pos_protein = self.get_protein_positions(protein_df)
 
-        scaffold_mask = get_ligand_scaffold_mask(ligand)
         # if scaffold_mask.sum() == 0:
         #    raise ValueError("No scaffold atom identified")
         # elif scaffold_mask.sum() == torch.numel(scaffold_mask):

@@ -22,6 +22,12 @@ def parse_args():
     args.add_argument(
         "--input_molecule", type=str, help="Input molecule", required=True
     )
+    args.add_argument(
+        "--input_scaff", type=str, help="Input molecule scaffold to keep", required=False
+    )
+    args.add_argument(
+        "--atom_num", type=int, default=0, help="More or less atom",
+    )
 
     args.add_argument("--input_protein", type=str, help="Input protein", required=True)
 
@@ -54,6 +60,15 @@ def resolve_args(args):
         and input_mol_path.suffix != ".pdb"
     ):
         raise ValueError(f"{input_mol_path} must be an sdf or mol2 file")
+    if args.input_scaff is not None:
+        input_scaff_path = Path(args.input_scaff)
+        if input_mol_path.exists():
+            input_scaff_mols = [mol for mol in Chem.SDMolSupplier(str(input_scaff_path))]
+        else:
+            raise ValueError(f"{input_scaff_path} does not exist")
+    else:
+        input_scaff_mols = None
+    atom_num = args.atom_num
     input_protein_path = Path(args.input_protein)
     if not input_protein_path.exists():
         raise ValueError(f"{input_protein_path} does not exist")
@@ -66,12 +81,12 @@ def resolve_args(args):
     num_samples = args.num_samples
     if num_samples < 1:
         raise ValueError(f"num_samples must be >= 1, got {num_samples}")
-    return input_mol_path, input_protein_path, output_folder_path, num_samples
+    return input_mol_path, input_scaff_mols, atom_num, input_protein_path, output_folder_path, num_samples
 
 
 def main():
     args = parse_args()
-    input_mol_path, input_protein_path, output_folder_path, num_samples = resolve_args(
+    input_mol_path, input_scaff_mols, atom_num, input_protein_path, output_folder_path, num_samples = resolve_args(
         args
     )
 
@@ -98,7 +113,7 @@ def main():
         c_alpha_only=True, cutoff=8.0, mode="residue"
     )
 
-    batch = Batch.from_data_list([featurization(pl_complex)] * num_samples).to(
+    batch = Batch.from_data_list([featurization(pl_complex,input_scaff_mols,atom_num)] * num_samples).to(
         model.device
     )
 

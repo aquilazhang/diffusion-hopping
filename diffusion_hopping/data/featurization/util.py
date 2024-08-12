@@ -1,6 +1,7 @@
 from typing import List
 
 import rdkit.Chem
+from rdkit import Chem
 import torch
 from rdkit.Chem.Scaffolds import MurckoScaffold
 from torch import nn as nn
@@ -30,17 +31,31 @@ residue_names = [
     "Y",
 ]
 
+def get_ligand_scaffold_mask(ligand: rdkit.Chem.Mol, scaff_mols = None) -> torch.Tensor:
+    if scaff_mols is None:
+        murcko_scaffold = MurckoScaffold.GetScaffoldForMol(ligand)
+        scaffold_substructures = ligand.GetSubstructMatches(murcko_scaffold)
+        substructure_indexes = [
+            i for substructure in scaffold_substructures for i in substructure
+        ]
+        mask = torch.zeros(len(ligand.GetAtoms()), dtype=torch.bool)
+        mask[substructure_indexes] = True
+        return mask
+    else:
+        substructure_indexes = get_scaff_idx(ligand=ligand,scaff_mols=scaff_mols)
+        # substructure_indexes is linker index
+        mask = torch.ones(len(ligand.GetAtoms()), dtype=torch.bool)
+        mask[substructure_indexes] = False
+        return mask
 
-def get_ligand_scaffold_mask(ligand: rdkit.Chem.Mol) -> torch.Tensor:
-    murcko_scaffold = MurckoScaffold.GetScaffoldForMol(ligand)
-    scaffold_substructures = ligand.GetSubstructMatches(murcko_scaffold)
-    substructure_indexes = [
-        i for substructure in scaffold_substructures for i in substructure
-    ]
-    mask = torch.zeros(len(ligand.GetAtoms()), dtype=torch.bool)
-    mask[substructure_indexes] = True
-    return mask
-
+def get_scaff_idx(ligand: rdkit.Chem.Mol, scaff_mols: List[rdkit.Chem.Mol]) -> List[int]:
+    scaff_mols = [Chem.RemoveHs(s) for s in scaff_mols]
+    scaff_substructures = [ligand.GetSubstructMatches(mol) for mol in scaff_mols]
+    substructure_indexes = list(set([
+        i for scaff_substructure in scaff_substructures for \
+            scaff_structure in scaff_substructure for i in scaff_structure
+    ]))
+    return substructure_indexes
 
 def one_hot(x: List["str"], classes: List["str"]) -> torch.Tensor:
     return nn.functional.one_hot(
